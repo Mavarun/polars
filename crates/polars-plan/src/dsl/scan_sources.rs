@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt::{Debug, Formatter};
 use std::fs::File;
 use std::sync::Arc;
@@ -185,16 +186,28 @@ impl PartialEq for ScanSources {
 
 impl Eq for ScanSources {}
 
+/// Reuse the original `Buffer` when `decode_file_uri_paths` left the paths untouched.
+fn into_buffer(original: &Buffer<PlRefPath>, decoded: Cow<'_, [PlRefPath]>) -> Buffer<PlRefPath> {
+    match decoded {
+        Cow::Borrowed(_) => original.clone(),
+        Cow::Owned(paths) => paths.into(),
+    }
+}
+
 impl ScanSources {
     pub async fn expand_paths(&self, scan_args: &mut UnifiedScanArgs) -> PolarsResult<Self> {
         match self {
             Self::Paths(paths) => {
                 // csv/ndjson/lines decode here; parquet/ipc decode in the hive variant.
-                let paths = decode_file_uri_paths(paths, scan_args.glob);
+                let decoded = decode_file_uri_paths(paths, scan_args.glob);
+
+                if !scan_args.expand_paths {
+                    return Ok(Self::Paths(into_buffer(paths, decoded)));
+                }
 
                 Ok(Self::Paths(
                     expand_paths(
-                        paths.as_ref(),
+                        decoded.as_ref(),
                         scan_args.glob,
                         scan_args.hidden_file_prefix.as_deref().unwrap_or_default(),
                         &mut scan_args.cloud_options,
@@ -217,8 +230,13 @@ impl ScanSources {
             Self::Paths(paths) => {
                 // Decode up front so expansion, single-directory detection, and hive parsing
                 // all see the same literal path; decoding later misfires hive detection.
-                let paths = decode_file_uri_paths(paths, scan_args.glob);
-                let paths = paths.as_ref();
+                let decoded = decode_file_uri_paths(paths, scan_args.glob);
+
+                if !scan_args.expand_paths {
+                    return Ok((Self::Paths(into_buffer(paths, decoded)), None));
+                }
+
+                let paths = decoded.as_ref();
 
                 let (expanded_paths, hive_start_idx, bytes_per_source) = expand_paths_hive(
                     paths,

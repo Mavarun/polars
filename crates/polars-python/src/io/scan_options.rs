@@ -54,6 +54,7 @@ impl PyScanOptions<'_> {
             missing_columns: Wrap<MissingColumnsPolicy>,
             include_file_paths: Option<Wrap<PlSmallStr>>,
             glob: bool,
+            expand_paths: bool,
             hidden_file_prefix: Option<Vec<PyBackedStr>>,
             column_mapping: Option<Wrap<ColumnMapping>>,
             default_values: Option<Wrap<DefaultFieldValues>>,
@@ -79,6 +80,7 @@ impl PyScanOptions<'_> {
             column_mapping,
             default_values,
             glob,
+            expand_paths,
             hidden_file_prefix,
             hive_partitioning,
             hive_schema,
@@ -120,6 +122,7 @@ impl PyScanOptions<'_> {
             rechunk,
             cache,
             glob,
+            expand_paths,
             hidden_file_prefix: hidden_file_prefix
                 .map(|x| x.into_iter().map(|x| (*x).into()).collect()),
             projection: None,
