@@ -37,6 +37,7 @@ pub fn create_scan_predicate(
     state: &mut ExpressionConversionState,
     create_skip_batch_predicate: bool,
     create_column_predicates: bool,
+    create_minterm_eirs: bool,
 ) -> PolarsResult<ScanPredicate> {
     let mut predicate = predicate.clone();
 
@@ -195,14 +196,31 @@ pub fn create_scan_predicate(
         }
     };
 
+    let predicate_minterm_eirs = if create_minterm_eirs {
+        Some(
+            MintermIter::new(predicate.node(), expr_arena)
+                .map(|node| ExprIR::new(node, OutputName::Alias(PlSmallStr::EMPTY)))
+                .collect(),
+        )
+    } else {
+        None
+    };
+
     PolarsResult::Ok(ScanPredicate {
         predicate: phys_predicate,
+        predicate_minterm_eirs,
         live_columns,
         skip_batch_predicate,
         column_predicates,
         hive_predicate,
         hive_predicate_is_full_predicate,
     })
+}
+
+#[derive(Default)]
+pub struct InitializeScanPredicateResult {
+    pub skip_files_mask: Option<SkipFilesMask>,
+    pub can_skip_scan_predicate: bool,
 }
 
 /// # Returns
@@ -212,9 +230,9 @@ pub fn initialize_scan_predicate<'a>(
     hive_parts: Option<&HivePartitionsDf>,
     table_statistics: Option<&TableStatistics>,
     verbose: bool,
-) -> PolarsResult<(Option<SkipFilesMask>, Option<&'a ScanIOPredicate>)> {
+) -> PolarsResult<InitializeScanPredicateResult> {
     let Some(predicate) = predicate else {
-        return Ok((None, None));
+        return Ok(Default::default());
     };
 
     let mut hive_inclusion: Option<Bitmap> = None;
@@ -255,7 +273,7 @@ pub fn initialize_scan_predicate<'a>(
                 mask_len,
                 hive_len
             );
-            return Ok((None, Some(predicate)));
+            return Ok(Default::default());
         }
 
         if predicate.hive_predicate_is_full_predicate {
@@ -267,7 +285,10 @@ pub fn initialize_scan_predicate<'a>(
                     skip_files_mask.len(),
                 );
             }
-            return Ok((Some(skip_files_mask), None));
+            return Ok(InitializeScanPredicateResult {
+                skip_files_mask: Some(skip_files_mask),
+                can_skip_scan_predicate: true,
+            });
         }
 
         hive_inclusion = Some(hive_inclusion_bitmap);
@@ -300,7 +321,7 @@ pub fn initialize_scan_predicate<'a>(
                 mask_len,
                 stats_len
             );
-            return Ok((None, Some(predicate)));
+            return Ok(Default::default());
         }
 
         stats_exclusion = Some(stats_exclusion_bitmap);
@@ -313,7 +334,7 @@ pub fn initialize_scan_predicate<'a>(
         },
         (Some(hive_inclusion), None) => SkipFilesMask::Inclusion(hive_inclusion),
         (None, Some(stats_exclusion)) => SkipFilesMask::Exclusion(stats_exclusion),
-        (None, None) => return Ok((None, Some(predicate))),
+        (None, None) => return Ok(Default::default()),
     };
 
     if verbose {
@@ -324,7 +345,10 @@ pub fn initialize_scan_predicate<'a>(
         );
     }
 
-    Ok((Some(skip_files_mask), Some(predicate)))
+    Ok(InitializeScanPredicateResult {
+        skip_files_mask: Some(skip_files_mask),
+        can_skip_scan_predicate: false,
+    })
 }
 
 /// Filters the list of files in an `IR::Scan` based on the contained predicate. This is possible
@@ -376,7 +400,7 @@ pub fn apply_scan_predicate_to_scan_ir(
 
     let verbose = config::verbose();
 
-    let scan_predicate = create_scan_predicate(
+    let (scan_predicate, _) = create_scan_predicate(
         predicate,
         expr_arena,
         &scan_ir_schema,
@@ -384,15 +408,21 @@ pub fn apply_scan_predicate_to_scan_ir(
         &mut ExpressionConversionState::new(true),
         true,  // create_skip_batch_predicate
         false, // create_column_predicates
+        false, // create_minterm_eirs
     )?
     .to_io(None, file_info.schema.clone());
 
-    let (skip_files_mask, predicate_to_readers) = initialize_scan_predicate(
+    let InitializeScanPredicateResult {
+        skip_files_mask,
+        can_skip_scan_predicate,
+    } = initialize_scan_predicate(
         Some(&scan_predicate),
         hive_parts.as_ref(),
         unified_scan_args.table_statistics.as_ref(),
         verbose,
     )?;
+
+    let predicate_to_readers = (!can_skip_scan_predicate).then_some(&scan_predicate);
 
     if let Some(skip_files_mask) = skip_files_mask {
         assert_eq!(skip_files_mask.len(), sources.len());
