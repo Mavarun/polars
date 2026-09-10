@@ -19,3 +19,11 @@ returns a lazy computation holder called a `LazyFrame`.
 
 If you want to know why this is desirable, you can read more about these Polars optimizations
 [here](../concepts/lazy-api.md).
+
+## Compressed CSV
+
+Both `read_csv` and `scan_csv` accept gzip and zstandard (zstd) compressed CSV data. Compression is
+supported when reading from a filesystem path and when reading from a file-like object such as
+`BytesIO` or an open binary file handle.
+
+{{code_block('user-guide/io/csv','compressed',['read_csv','scan_csv'])}}

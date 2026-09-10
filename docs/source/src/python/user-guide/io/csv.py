@@ -17,3 +17,12 @@ df.write_csv("docs/assets/data/path.csv")
 # --8<-- [start:scan]
 df = pl.scan_csv("docs/assets/data/path.csv")
 # --8<-- [end:scan]
+
+# --8<-- [start:compressed]
+import gzip
+from io import BytesIO
+
+compressed = gzip.compress(b"a,b\n1,x\n2,y\n")
+df = pl.read_csv(BytesIO(compressed))
+lf = pl.scan_csv(BytesIO(compressed))
+# --8<-- [end:compressed]
